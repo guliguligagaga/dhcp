@@ -3,18 +3,73 @@
 package dhcp
 
 import (
+	"log/slog"
 	"net"
 	"syscall"
+	"time"
 )
 
-const (
-	ETH_ALEN = 6
-)
+type winConn struct {
+	conn    net.PacketConn
+	rawConn syscall.Handle
+}
 
-type EthernetHeader struct {
-	Destination [ETH_ALEN]byte
-	Source      [ETH_ALEN]byte
-	Proto       uint16
+func (c *winConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	if v, ok := addr.(*net.UDPAddr); ok {
+		return c.conn.WriteTo(p, v)
+	}
+	//it's ethAddr here, cut udp,ip,eth headers
+	return c.conn.WriteTo(p[42:], &net.UDPAddr{IP: net.IPv4bcast, Port: 68})
+
+	// windows doesn't allow to operate on raw sockets
+	// there is a library on C that allow to do that, and it's implemented in gopackets library,
+	// but the goal is to not use any third-party libraries
+}
+
+// this is a dark area
+//func sendRawPacket(interfaceName string, dstMac, srcMac [6]byte, ethType uint16, payload []byte) error {
+//	dev := C.CString(interfaceName)
+//	defer C.free(unsafe.Pointer(dev))
+//
+//	errBuf := (*C.char)(C.calloc(C.PCAP_ERRBUF_SIZE, 1))
+//	defer C.free(unsafe.Pointer(errBuf))
+//
+//	handle := C.pcap_open_live(dev, 65536, 1, 1000, errBuf)
+//	if handle == nil {
+//		return fmt.Errorf("failed to open device: %s", C.GoString(errBuf))
+//	}
+//	defer C.pcap_close(handle)
+//
+//	frame := make([]byte, 14+len(payload))
+//	copy(frame[0:6], dstMac[:])        // Destination MAC
+//	copy(frame[6:12], srcMac[:])       // Source MAC
+//	frame[12] = byte(ethType >> 8)     // EtherType (high byte)
+//	frame[13] = byte(ethType & 0x00FF) // EtherType (low byte)
+//	copy(frame[14:], payload)          // Payload
+//
+//	res := C.pcap_sendpacket(handle, (*C.u_char)(unsafe.Pointer(&frame[0])), C.int(len(frame)))
+//	if res != 0 {
+//		return fmt.Errorf("pcap_sendpacket failed: %s", C.GoString(C.pcap_geterr(handle)))
+//	}
+//
+//	log.Println("Packet sent successfully!")
+//	return nil
+//}
+
+func (c *winConn) SetReadDeadline(t time.Time) error {
+	return c.conn.SetReadDeadline(t)
+}
+
+func (c *winConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	return c.conn.ReadFrom(p)
+}
+
+func (c *winConn) Close() {
+	//err1 := c.rawConn.Close()
+	err2 := c.conn.Close()
+	if err2 != nil {
+		slog.Error("Failed to close connection", "err2", err2)
+	}
 }
 
 func (s *Server) Write(e *Ethernet) error {
@@ -22,139 +77,15 @@ func (s *Server) Write(e *Ethernet) error {
 	return err
 }
 
-func (s *Server) buildConn() (net.PacketConn, error) {
-	conn, err := NewWinPacketConn()
+func (s *Server) buildConn() (*winConn, error) {
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 67})
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
-}
+	slog.Info("Listening on", "addr", udpConn.LocalAddr())
+	slog.Info("Broadcasting on", "addr", udpConn.RemoteAddr())
 
-func WSAStart() error {
-	var wsaData syscall.WSAData
-	return syscall.WSAStartup(uint32(0x0202), &wsaData)
-}
-
-var (
-	modws2_32       = syscall.NewLazyDLL("ws2_32.dll")
-	procSocket      = modws2_32.NewProc("socket")
-	procBind        = modws2_32.NewProc("bind")
-	procSendto      = modws2_32.NewProc("sendto")
-	procRecvfrom    = modws2_32.NewProc("recvfrom")
-	procSetsockopt  = modws2_32.NewProc("setsockopt")
-	procClosesocket = modws2_32.NewProc("closesocket")
-)
-
-type WinPacketConn struct {
-	fd syscall.Handle
-}
-
-func NewWinPacketConn() (*WinPacketConn, error) {
-	fd, _, err := procSocket.Call(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_UDP)
-	if err != nil && err != syscall.Errno(0) {
-		return nil, err
-	}
-
-	_, _, err = procSetsockopt.Call(fd, syscall.SOL_SOCKET, syscall.SO_BROADCAST, uintptr(unsafe.Pointer(&[]byte{1}[0])), 1)
-	if err != nil && err != syscall.Errno(0) {
-		syscall.CloseHandle(syscall.Handle(fd))
-		return nil, err
-	}
-
-	_, _, err = procSetsockopt.Call(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, uintptr(unsafe.Pointer(&[]byte{1}[0])), 1)
-	if err != nil && err != syscall.Errno(0) {
-		syscall.CloseHandle(syscall.Handle(fd))
-		return nil, err
-	}
-
-	return &WinPacketConn{fd: syscall.Handle(fd)}, nil
-}
-
-func (c *WinPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	udpAddr, ok := addr.(*net.UDPAddr)
-	if !ok {
-		return 0, errors.New("addr is not UDPAddr")
-	}
-	sa := syscall.RawSockaddrInet4{
-		Family: syscall.AF_INET,
-		Port:   uint16(udpAddr.Port<<8) | uint16(udpAddr.Port>>8), // network byte order
-	}
-	copy(sa.Addr[:], udpAddr.IP.To4())
-
-	r1, _, e1 := procSendto.Call(
-		uintptr(c.fd),
-		uintptr(unsafe.Pointer(&p[0])),
-		uintptr(len(p)),
-		0,
-		uintptr(unsafe.Pointer(&sa)),
-		unsafe.Sizeof(sa),
-	)
-	if r1 != 0 {
-		return 0, e1
-	}
-	return int(r1), nil
-}
-
-func (c *WinPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	var from syscall.RawSockaddrInet4
-	fromlen := int32(unsafe.Sizeof(from))
-	r1, _, e1 := procRecvfrom.Call(
-		uintptr(c.fd),
-		uintptr(unsafe.Pointer(&p[0])),
-		uintptr(len(p)),
-		0,
-		uintptr(unsafe.Pointer(&from)),
-		uintptr(unsafe.Pointer(&fromlen)),
-	)
-	if r1 != 0 {
-		return 0, nil, e1
-	}
-
-	ip := net.IPv4(from.Addr[0], from.Addr[1], from.Addr[2], from.Addr[3])
-	port := int(from.Port>>8) | int(from.Port<<8)
-	return int(r1), &net.UDPAddr{IP: ip, Port: port}, nil
-}
-
-func (c *WinPacketConn) Close() error {
-	_, _, err := procClosesocket.Call(uintptr(c.fd))
-	return err
-}
-
-func (c *WinPacketConn) LocalAddr() net.Addr {
-	return &net.UDPAddr{IP: net.IPv4zero, Port: 0}
-}
-
-func (c *WinPacketConn) SetDeadline(t time.Time) error {
-	return c.setDeadline(t, 0)
-}
-
-func (c *WinPacketConn) SetReadDeadline(t time.Time) error {
-	return c.setDeadline(t, 0)
-}
-
-func (c *WinPacketConn) SetWriteDeadline(t time.Time) error {
-	return c.setDeadline(t, 0)
-}
-
-func (c *WinPacketConn) setDeadline(t time.Time, opt int) error {
-	var tv int64
-	if !t.IsZero() {
-		d := t.Sub(time.Now())
-		if d < 0 {
-			tv = 1 // minimum non-zero timeout
-		} else {
-			tv = int64(d / time.Millisecond)
-		}
-	}
-	_, _, err := procSetsockopt.Call(
-		uintptr(c.fd),
-		syscall.SOL_SOCKET,
-		uintptr(opt),
-		uintptr(unsafe.Pointer(&tv)),
-		unsafe.Sizeof(tv),
-	)
-	if err != nil && err != syscall.Errno(0) {
-		return err
-	}
-	return nil
+	return &winConn{
+		conn: udpConn,
+	}, nil
 }

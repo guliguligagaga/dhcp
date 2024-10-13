@@ -16,12 +16,17 @@ func (m *mockConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (m *mockConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	m.p = p
-	return 0, nil
+
+	if _, ok := addr.(*net.UDPAddr); ok {
+		m.p = p
+		return len(p), nil
+	}
+	m.p = p[42:]
+	return len(m.p), nil
 }
 
-func (m *mockConn) Close() error {
-	return nil
+func (m *mockConn) Close() {
+
 }
 
 func (m *mockConn) LocalAddr() net.Addr {

@@ -132,24 +132,6 @@ func intToBytes(i uint32) []byte {
 	return b
 }
 
-func (p *Packet) Print() {
-	fmt.Printf("Op: %d\n", p.Op)
-	fmt.Printf("Hardware Type: %d\n", p.HType)
-	fmt.Printf("Hardware Address Length: %d\n", p.HLen)
-	fmt.Printf("Hops: %d\n", p.Hops)
-	fmt.Printf("Transaction ID: %d\n", p.XId)
-	fmt.Printf("Seconds: %d\n", p.Secs)
-	fmt.Printf("Flags: %d\n", p.Flags)
-	fmt.Printf("Client IP Address: %s\n", p.CIAddr)
-	fmt.Printf("Your IP Address: %s\n", p.YIAddr)
-	fmt.Printf("Server IP Address: %s\n", p.SIAddr)
-	fmt.Printf("Gateway IP Address: %s\n", p.GIAddr)
-	fmt.Printf("Client Hardware Address: %s\n", p.CHAddr)
-	fmt.Printf("Server Name: %s\n", string(p.SName[:]))
-	fmt.Printf("Boot Filename: %s\n", string(p.File[:]))
-	fmt.Printf("Options: %v\n", getDHCPMessageType(p.Options))
-}
-
 func (p *Packet) Encode() []byte {
 	data := make([]byte, 240+len(p.Options))
 	data[0] = p.Op

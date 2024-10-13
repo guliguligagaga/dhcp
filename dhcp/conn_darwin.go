@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) Write(e *Ethernet, addr net.Addr) error {
-	_, err := s.conn.WriteTo(e.Bytes(), addr)
+	_, err := s.conn.WriteTo(e.Encode(), addr)
 	return err
 }
 

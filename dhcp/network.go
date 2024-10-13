@@ -55,9 +55,7 @@ func (e *ethernet) Encode() []byte {
 	copy(eth[6:12], e.Source)
 	eth[12] = byte(e.Type >> 8)
 	eth[13] = byte(e.Type)
-	for i, b := range e.Payload {
-		eth[i+14] = b
-	}
+	copy(eth[14:], e.Payload)
 	return eth
 }
 
@@ -69,7 +67,7 @@ type Ethernet struct {
 	Payload []byte
 }
 
-func (p *Ethernet) Bytes() []byte {
+func (p *Ethernet) Encode() []byte {
 	u := udp{
 		Source:      p.SourcePort,
 		Destination: p.DestinationPort,
@@ -109,10 +107,22 @@ func (p *Ethernet) udp() []byte {
 	return u.Encode()
 }
 
+type rawAddr struct {
+}
+
+func (a rawAddr) Network() string {
+	return "ethernet"
+}
+
+func (a rawAddr) String() string {
+	return ""
+}
+
 func (s *Server) sendPacket(p *Packet, sendAddr *net.UDPAddr) error {
+
 	isNak := p.GetOption(OptionDHCPMessageType)[0] == DHCPNAK
 
-	if p.GIAddr != nil && !p.GIAddr.IsUnspecified() {
+	if IPNotEmpty(p.GIAddr) {
 		if isNak {
 			p.SetBroadcast()
 		} else {
@@ -122,14 +132,22 @@ func (s *Server) sendPacket(p *Packet, sendAddr *net.UDPAddr) error {
 	} else if isNak {
 		// always broadcast NAK
 		sendAddr = &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
-	} else if p.CIAddr != nil && !p.CIAddr.IsUnspecified() {
+	} else if IPNotEmpty(p.CIAddr) {
 		// send directly to client ip
 		sendAddr = &net.UDPAddr{IP: p.CIAddr, Port: 68}
 	} else if !p.IsBroadcast() && p.CHAddr != nil {
-		//unicast
-	}
+		// unicast by mac
+		e := Ethernet{
+			SourcePort:      67,
+			DestinationPort: 68,
+			SourceIP:        s.config.ServerIP,
+			DestinationMAC:  p.CHAddr,
+			Payload:         p.Encode(),
+		}
 
-	if sendAddr.IP.IsUnspecified() {
+		_, err := s.conn.WriteTo(e.Encode(), rawAddr{})
+		return err
+	} else {
 		sendAddr.IP = net.IPv4bcast
 	}
 
