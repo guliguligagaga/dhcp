@@ -1,8 +1,7 @@
-package dhcp
+package frame
 
 import (
 	"encoding/binary"
-	"log/slog"
 	"net"
 )
 
@@ -105,58 +104,4 @@ func (p *Ethernet) udp() []byte {
 		Payload:     p.Payload,
 	}
 	return u.Encode()
-}
-
-type rawAddr struct {
-}
-
-func (a rawAddr) Network() string {
-	return "ethernet"
-}
-
-func (a rawAddr) String() string {
-	return ""
-}
-
-func (s *Server) sendPacket(p *Packet, sendAddr *net.UDPAddr) error {
-
-	isNak := p.GetOption(OptionDHCPMessageType)[0] == DHCPNAK
-
-	if IPNotEmpty(p.GIAddr) {
-		if isNak {
-			p.SetBroadcast()
-		} else {
-			// return to relay agent
-			sendAddr = &net.UDPAddr{IP: p.GIAddr, Port: 67}
-		}
-	} else if isNak {
-		// always broadcast NAK
-		sendAddr = &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
-	} else if IPNotEmpty(p.CIAddr) {
-		// send directly to client ip
-		sendAddr = &net.UDPAddr{IP: p.CIAddr, Port: 68}
-	} else if !p.IsBroadcast() && p.CHAddr != nil {
-		// unicast by mac
-		e := Ethernet{
-			SourcePort:      67,
-			DestinationPort: 68,
-			SourceIP:        s.config.ServerIP,
-			DestinationMAC:  p.CHAddr,
-			Payload:         p.Encode(),
-		}
-
-		_, err := s.conn.WriteTo(e.Encode(), rawAddr{})
-		return err
-	} else {
-		sendAddr.IP = net.IPv4bcast
-	}
-
-	encodedPacket := p.Encode()
-	_, err := s.conn.WriteTo(encodedPacket, sendAddr)
-	if err != nil {
-		slog.Error("Failed to send DHCP packet", "error", err, "client", p.CHAddr, "offer_ip", p.CIAddr)
-	} else {
-		slog.Info("Sent DHCP packet", "client", p.CHAddr, "offer_ip", p.CIAddr)
-	}
-	return err
 }

@@ -1,4 +1,4 @@
-package dhcp
+package dhcpv4
 
 const (
 	// DHCP Message Types

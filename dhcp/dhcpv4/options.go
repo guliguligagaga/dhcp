@@ -1,4 +1,9 @@
-package dhcp
+package dhcpv4
+
+import (
+	"net"
+	"time"
+)
 
 const (
 	// Commonly used DHCP options
@@ -28,3 +33,14 @@ const (
 	OptionClasslessStaticRoute      = 121
 	OptionEnd                       = 255
 )
+
+type ReplyOptions struct {
+	LeaseTime     time.Duration
+	RenewalTime   time.Duration
+	RebindingTime time.Duration
+	SubnetMask    net.IPMask
+	Router        net.IP
+	DNS           []net.IP
+	ServerIP      net.IP
+	DomainName    string
+}

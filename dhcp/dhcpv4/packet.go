@@ -1,4 +1,4 @@
-package dhcp
+package dhcpv4
 
 import (
 	o "dhcp/dhcp/options"

@@ -1,8 +1,8 @@
-package dhcp
+package dhcpv4
 
 import "net"
 
-func IPNotEmpty(ip net.IP) bool {
+func notEmpty(ip net.IP) bool {
 	if ip == nil {
 		return false
 	}

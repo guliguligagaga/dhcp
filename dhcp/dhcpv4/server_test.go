@@ -1,4 +1,4 @@
-package dhcp
+package dhcpv4
 
 import (
 	"fmt"
@@ -25,8 +25,8 @@ func (m *mockConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	return len(m.p), nil
 }
 
-func (m *mockConn) Close() {
-
+func (m *mockConn) Close() error {
+	return nil
 }
 
 func (m *mockConn) LocalAddr() net.Addr {
@@ -103,15 +103,15 @@ func TestHandleRequest(t *testing.T) {
 		packet          *Packet
 		expectedState   int
 		expectResponse  bool
-		setup           func(*Server)
+		setup           func(*DHCPv4)
 		additionalCheck func(*testing.T, *Packet)
 	}{
 		{
 			name:           "SELECTING - Valid request",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.100"), cfg.ServerIP),
-			expectedState:  SELECTING,
+			expectedState:  selecting,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -127,15 +127,15 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "SELECTING - Different server",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.100"), net.ParseIP("192.168.1.3")),
-			expectedState:  SELECTING,
+			expectedState:  selecting,
 			expectResponse: false,
 		},
 		{
 			name:           "INIT_REBOOT - Valid request",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.100"), net.IPv4zero),
-			expectedState:  INIT_REBOOT,
+			expectedState:  initReboot,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -151,9 +151,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "RENEWING - Valid request",
 			packet:         createPacket(DHCPREQUEST, net.ParseIP("192.168.1.100"), net.IPv4zero, net.IPv4zero),
-			expectedState:  RENEWING,
+			expectedState:  renewing,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -169,9 +169,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "REBINDING - Valid request",
 			packet:         createPacket(DHCPREQUEST, net.ParseIP("192.168.1.100"), net.IPv4zero, net.IPv4zero),
-			expectedState:  REBINDING,
+			expectedState:  rebinding,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -193,7 +193,7 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "SELECTING - IP not in server pool",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.2.100"), cfg.ServerIP),
-			expectedState:  SELECTING,
+			expectedState:  selecting,
 			expectResponse: true,
 			additionalCheck: func(t *testing.T, p *Packet) {
 				if p.DHCPMessageType() != DHCPNAK {
@@ -204,7 +204,7 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "INIT_REBOOT - Unknown client",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.150"), net.IPv4zero),
-			expectedState:  INIT_REBOOT,
+			expectedState:  initReboot,
 			expectResponse: true,
 			additionalCheck: func(t *testing.T, p *Packet) {
 				if p.DHCPMessageType() != DHCPNAK {
@@ -215,9 +215,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "RENEWING - Expired lease",
 			packet:         createPacket(DHCPREQUEST, net.ParseIP("192.168.1.100"), net.IPv4zero, net.IPv4zero),
-			expectedState:  RENEWING,
+			expectedState:  renewing,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -233,9 +233,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "REBINDING - IP conflict",
 			packet:         createPacket(DHCPREQUEST, net.ParseIP("192.168.1.100"), net.IPv4zero, net.IPv4zero),
-			expectedState:  REBINDING,
+			expectedState:  rebinding,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"),
 					MAC:        net.HardwareAddr{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF},
@@ -251,9 +251,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "SELECTING - Full IP pool",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.150"), cfg.ServerIP),
-			expectedState:  SELECTING,
+			expectedState:  selecting,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				for i := 100; i <= 200; i++ {
 					ip := net.ParseIP(fmt.Sprintf("192.168.1.%d", i))
 					s.bindings[uint64(i)] = &binding{
@@ -272,9 +272,9 @@ func TestHandleRequest(t *testing.T) {
 		{
 			name:           "INIT_REBOOT - Requested IP doesn't match binding",
 			packet:         createPacket(DHCPREQUEST, net.IPv4zero, net.ParseIP("192.168.1.150"), net.IPv4zero),
-			expectedState:  INIT_REBOOT,
+			expectedState:  initReboot,
 			expectResponse: true,
-			setup: func(s *Server) {
+			setup: func(s *DHCPv4) {
 				s.bindings[convertMACToUint64(net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55})] = &binding{
 					IP:         net.ParseIP("192.168.1.100"), // Different from requested IP
 					MAC:        net.HardwareAddr{0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
@@ -291,16 +291,15 @@ func TestHandleRequest(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			server, _ := NewServer(cfg)
-			server.conn.Close()
-			server.conn = &mockConn{}
+			server, _ := MakeDHCPv4(cfg)
+			server.udpConn = &mockConn{}
 
 			if tc.setup != nil {
 				tc.setup(server)
 			}
 
 			server.handleRequest(tc.packet, mockAddr)
-			sentPacket := server.conn.(*mockConn).sentPacket()
+			sentPacket := server.udpConn.(*mockConn).sentPacket()
 
 			if tc.expectResponse && sentPacket == nil {
 				t.Errorf("Expected a response packet, but none was sent")
