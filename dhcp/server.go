@@ -1,7 +1,7 @@
 package dhcp
 
 import (
-	"dhcp/dhcp/dhcpv4"
+	"dhcp/dhcp/v4"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -9,15 +9,15 @@ import (
 )
 
 type Server struct {
-	v4 *dhcpv4.DHCPv4
+	v4 *v4.DHCPv4
 	//v6       dhcpv6
 
 	mtu int
 }
 
-func NewServer(cfg *dhcpv4.Config) (*Server, error) {
+func NewServer(cfg *v4.Config) (*Server, error) {
 
-	srv4, err := dhcpv4.MakeDHCPv4(cfg)
+	srv4, err := v4.MakeDHCPv4(cfg)
 	if err != nil {
 		return nil, err
 	}
